@@ -1,8 +1,12 @@
+import os
+os.environ['FLASK_DOTENV_LOADING'] = 'false'
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from snowflake_client import (
     fetch_table_data, get_available_tables, get_table_info,
-    get_available_schemas, discover_all_databases, test_database_connection
+    get_available_schemas, discover_all_databases, test_database_connection,
+    close_connections
 )
 from config import get_database_config, get_available_databases
 
@@ -14,7 +18,7 @@ def get_databases():
     """Get list of available databases"""
     try:
         databases = discover_all_databases()
-        return jsonify(databases)
+        return jsonify({'databases': databases})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -40,7 +44,7 @@ def get_databases_info():
                     'database': db['database'],
                     'status': 'failed'
                 })
-        return jsonify(info)
+        return jsonify({'databases': info})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -58,7 +62,7 @@ def get_schemas(database_key):
     """Get available schemas for a database"""
     try:
         schemas = get_available_schemas(database_key)
-        return jsonify(schemas)
+        return jsonify({'schemas': schemas})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -67,16 +71,16 @@ def get_tables(database_key):
     """Get available tables for a database (default schema)"""
     try:
         tables = get_available_tables(database_key)
-        return jsonify(tables)
+        return jsonify({'tables': tables})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/databases/<database_key>/schemas/<schema_name>/tables', methods=['GET'])
-def get_tables_in_schema(database_key, schema_name):
+def get_schema_tables(database_key, schema_name):
     """Get available tables for a specific schema"""
     try:
         tables = get_available_tables(database_key, schema_name)
-        return jsonify(tables)
+        return jsonify({'tables': tables})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -161,48 +165,72 @@ def get_table_in_schema(database_key, schema_name, table_name):
         print(f"❌ Exception: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# Legacy endpoints for backward compatibility
 @app.route('/api/tables', methods=['GET'])
 def get_all_tables():
-    """Get all available tables (legacy endpoint)"""
+    """Get all available tables across all databases"""
     try:
-        tables = get_available_tables('default')
-        return jsonify(tables)
+        databases = discover_all_databases()
+        all_tables = []
+        
+        for db in databases:
+            db_key = db['key']
+            schemas = get_available_schemas(db_key)
+            
+            for schema in schemas:
+                tables = get_available_tables(db_key, schema['name'])
+                for table in tables:
+                    all_tables.append({
+                        'database': db['name'],
+                        'schema': schema['name'],
+                        'table': table['name']
+                    })
+        
+        return jsonify({'tables': all_tables})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/tables/<table_name>/info', methods=['GET'])
-def get_table_info_legacy(table_name):
-    """Get table information (legacy endpoint)"""
+def get_table_info_route(table_name):
+    """Get detailed information about a table"""
     try:
-        info = get_table_info(table_name, 'default')
-        return jsonify(info)
+        database_key = request.args.get('database', 'llm_eval')
+        schema_name = request.args.get('schema', 'PUBLIC')
+        
+        table_info = get_table_info(table_name, database_key, schema_name)
+        return jsonify(table_info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/data/<table_name>', methods=['GET'])
+@app.route('/api/tables/<table_name>/data', methods=['GET'])
 def get_table_data_legacy(table_name):
-    """Get table data (legacy endpoint)"""
+    """Get data from a table with pagination and search"""
     try:
-        limit = request.args.get('limit', 100, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        database_key = request.args.get('database', 'llm_eval')
+        schema_name = request.args.get('schema', 'PUBLIC')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
         search = request.args.get('search', '')
         
-        columns, rows = fetch_table_data(table_name, 'default', limit=limit, offset=offset, search=search)
+        columns, rows = fetch_table_data(table_name, database_key, schema_name, limit, offset, search)
         
         return jsonify({
             'columns': columns,
             'rows': rows,
-            'metadata': {
-                'table_name': table_name,
-                'limit': limit,
-                'offset': offset,
-                'total_rows': len(rows),
-                'has_more': len(rows) == limit
-            }
+            'total_rows': len(rows),
+            'limit': limit,
+            'offset': offset
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/clear-cache', methods=['POST'])
+def clear_cache():
+    """Clear all cached data and connections"""
+    try:
+        close_connections()
+        return jsonify({'message': 'Cache cleared successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
-    app.run(debug=True, host='127.0.0.1', port=5000) 
+    app.run(debug=True, host='0.0.0.0', port=5000) 

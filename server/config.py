@@ -1,20 +1,18 @@
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Base Snowflake configuration
 BASE_SNOWFLAKE_CONFIG = {
-    'user': os.getenv('SNOWFLAKE_USER'),
-    'password': os.getenv('SNOWFLAKE_PASSWORD', '').strip('"'),  # Remove quotes if present
-    'account': os.getenv('SNOWFLAKE_ACCOUNT', '').split('.')[0],  # Remove region suffix
-    'warehouse': os.getenv('SNOWFLAKE_WAREHOUSE'),
+    'user': os.getenv('SNOWFLAKE_USER', 'REACT_USER'),
+    'password': os.getenv('SNOWFLAKE_PASSWORD', 'Jv!7rNc#29pWqZsT'),
+    'account': os.getenv('SNOWFLAKE_ACCOUNT', 'SNBBKKE-ZP62487'),
+    'warehouse': os.getenv('SNOWFLAKE_WAREHOUSE', 'LLMS_WH'),
+    'role': os.getenv('SNOWFLAKE_ROLE', 'LLM_ROLE'),
 }
 
 # Database configurations
 DATABASES = {
     'default': {
-        'database': os.getenv('SNOWFLAKE_DATABASE'),
+        'database': os.getenv('SNOWFLAKE_DATABASE', 'LLM_EVAL'),
         'schema': os.getenv('SNOWFLAKE_SCHEMA', 'PUBLIC').split('.')[-1]  # Just the schema part
     }
 }

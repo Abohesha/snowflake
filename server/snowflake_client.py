@@ -1,31 +1,60 @@
 import snowflake.connector
 from config import get_database_config, get_available_databases, BASE_SNOWFLAKE_CONFIG
 from functools import lru_cache
+import threading
 
+# Global connection pool
+_connection_pool = {}
+_connection_lock = threading.Lock()
+
+def get_connection(database_key=None):
+    """Get a connection from the pool or create a new one"""
+    config = BASE_SNOWFLAKE_CONFIG.copy()
+    if database_key:
+        config['database'] = database_key.upper()
+    
+    # Use a simple key for the pool
+    pool_key = database_key.upper() if database_key else 'default'
+    
+    with _connection_lock:
+        if pool_key not in _connection_pool:
+            _connection_pool[pool_key] = snowflake.connector.connect(**config)
+    
+    return _connection_pool[pool_key]
+
+def close_connections():
+    """Close all connections in the pool"""
+    with _connection_lock:
+        for conn in _connection_pool.values():
+            try:
+                conn.close()
+            except:
+                pass
+        _connection_pool.clear()
+
+@lru_cache(maxsize=10)
 def test_database_connection(database_key):
     """Test connection to a specific database"""
     try:
-        config = get_database_config(database_key)
-        conn = snowflake.connector.connect(**config)
+        conn = get_connection(database_key)
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         result = cursor.fetchone()
         cursor.close()
-        conn.close()
         return result[0] == 1
     except Exception as e:
         print(f"Connection test failed for {database_key}: {str(e)}")
         return False
 
+@lru_cache(maxsize=20)
 def get_available_schemas(database_key):
     """Get available schemas for a database"""
     try:
-        config = get_database_config(database_key)
-        conn = snowflake.connector.connect(**config)
+        conn = get_connection(database_key)
         cursor = conn.cursor()
         
         # Use the database
-        cursor.execute(f"USE DATABASE {config['database']}")
+        cursor.execute(f"USE DATABASE {database_key.upper()}")
         
         # Show schemas
         cursor.execute("SHOW SCHEMAS")
@@ -39,28 +68,26 @@ def get_available_schemas(database_key):
             })
         
         cursor.close()
-        conn.close()
-        
         return schemas
     except Exception as e:
         print(f"Failed to get schemas for {database_key}: {str(e)}")
         return []
 
+@lru_cache(maxsize=50)
 def get_available_tables(database_key, schema_name=None):
     """Get available tables for a database and schema"""
     try:
-        config = get_database_config(database_key)
-        conn = snowflake.connector.connect(**config)
+        conn = get_connection(database_key)
         cursor = conn.cursor()
         
         # Use the database
-        cursor.execute(f"USE DATABASE {config['database']}")
+        cursor.execute(f"USE DATABASE {database_key.upper()}")
         
         # Use schema if specified, otherwise use default
         if schema_name:
             cursor.execute(f"USE SCHEMA {schema_name}")
         else:
-            cursor.execute(f"USE SCHEMA {config['schema']}")
+            cursor.execute(f"USE SCHEMA PUBLIC")
         
         # Show tables
         cursor.execute("SHOW TABLES")
@@ -74,8 +101,6 @@ def get_available_tables(database_key, schema_name=None):
             })
         
         cursor.close()
-        conn.close()
-        
         return tables
     except Exception as e:
         print(f"Failed to get tables for {database_key}: {str(e)}")
@@ -84,18 +109,17 @@ def get_available_tables(database_key, schema_name=None):
 def get_table_info(table_name, database_key, schema_name=None):
     """Get detailed information about a table"""
     try:
-        config = get_database_config(database_key)
-        conn = snowflake.connector.connect(**config)
+        conn = get_connection(database_key)
         cursor = conn.cursor()
         
         # Use the database
-        cursor.execute(f"USE DATABASE {config['database']}")
+        cursor.execute(f"USE DATABASE {database_key.upper()}")
         
         # Use schema if specified, otherwise use default
         if schema_name:
             cursor.execute(f"USE SCHEMA {schema_name}")
         else:
-            cursor.execute(f"USE SCHEMA {config['schema']}")
+            cursor.execute(f"USE SCHEMA PUBLIC")
         
         # Describe table
         cursor.execute(f"DESCRIBE TABLE {table_name}")
@@ -116,12 +140,11 @@ def get_table_info(table_name, database_key, schema_name=None):
             })
         
         cursor.close()
-        conn.close()
         
         return {
             'table_name': table_name,
             'database': database_key,
-            'schema': schema_name or config['schema'],
+            'schema': schema_name or 'PUBLIC',
             'columns': columns
         }
     except Exception as e:
@@ -131,18 +154,17 @@ def get_table_info(table_name, database_key, schema_name=None):
 def fetch_table_data(table_name, database_key, schema_name=None, limit=100, offset=0, search=''):
     """Fetch data from a table with pagination and search"""
     try:
-        config = get_database_config(database_key)
-        conn = snowflake.connector.connect(**config)
+        conn = get_connection(database_key)
         cursor = conn.cursor()
         
         # Use the database
-        cursor.execute(f"USE DATABASE {config['database']}")
+        cursor.execute(f"USE DATABASE {database_key.upper()}")
         
         # Use schema if specified, otherwise use default
         if schema_name:
             cursor.execute(f"USE SCHEMA {schema_name}")
         else:
-            cursor.execute(f"USE SCHEMA {config['schema']}")
+            cursor.execute(f"USE SCHEMA PUBLIC")
         
         # Build query with search
         if search:
@@ -174,7 +196,6 @@ def fetch_table_data(table_name, database_key, schema_name=None, limit=100, offs
             rows.append(row_dict)
         
         cursor.close()
-        conn.close()
         
         return columns, rows
     except Exception as e:
